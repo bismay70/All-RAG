@@ -2,6 +2,10 @@
 
 RAGLab AI is a local-first Retrieval-Augmented Generation research workbench. It lets you upload documents, index them, ask grounded questions, inspect citations and traces, and compare RAG strategies without requiring a paid hosted vector database.
 
+<div align="center">
+  <img src="main.png" alt="RAGLab AI" width="700">
+</div>
+
 ## What Is Implemented
 
 - FastAPI backend skeleton with versioned routes and OpenAPI docs.
