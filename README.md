@@ -37,8 +37,6 @@ frontend/
     lib/
     types/
     App.tsx
-RAGLab_AI_Master_Architecture_and_Agent_Build_Spec.md
-prompt.md
 image.png
 ```
 
