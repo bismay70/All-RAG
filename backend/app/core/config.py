@@ -32,13 +32,16 @@ class Settings(BaseSettings):
     upload_max_bytes: int = 10 * 1024 * 1024
     chunk_size: int = 900
     chunk_overlap: int = 150
+    embedding_provider: str = "sentence_transformers"
+    embedding_model: str = "all-MiniLM-L6-v2"
     embedding_dimensions: int = 384
 
-    grok_api_key: SecretStr | None = Field(
-        default=None, validation_alias=AliasChoices("GROK_API_KEY", "XAI_API_KEY")
+    groq_api_key: SecretStr | None = Field(
+        default=None, validation_alias=AliasChoices("GROQ_API_KEY")
     )
-    grok_model: str = Field(default="latest", validation_alias=AliasChoices("GROK_MODEL", "XAI_MODEL"))
-    xai_base_url: str = "https://api.x.ai/v1"
+    groq_model: str = ""
+    groq_default_model: str = "llama-3.3-70b-versatile"
+    groq_base_url: str = "https://api.groq.com/openai/v1"
     provider_timeout_seconds: float = 20.0
     provider_max_retries: int = 1
 
@@ -60,6 +63,13 @@ class Settings(BaseSettings):
             return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
+    @field_validator("groq_model", mode="before")
+    @classmethod
+    def normalize_groq_model(cls, value: Any) -> str:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return ""
+        return str(value)
+
     @property
     def sqlite_path(self) -> Path | None:
         if self.database_url.startswith("sqlite:///"):
@@ -71,14 +81,18 @@ class Settings(BaseSettings):
         return None
 
     @property
-    def is_grok_configured(self) -> bool:
-        return self.grok_api_key is not None and bool(self.grok_api_key.get_secret_value())
+    def is_groq_configured(self) -> bool:
+        return self.groq_api_key is not None and bool(self.groq_api_key.get_secret_value())
+
+    @property
+    def selected_groq_model(self) -> str:
+        return self.groq_model.strip() or self.groq_default_model
 
     @property
     def configured_secret_names(self) -> list[str]:
         names: list[str] = []
-        if self.is_grok_configured:
-            names.append("GROK_API_KEY")
+        if self.is_groq_configured:
+            names.append("GROQ_API_KEY")
         if self.x_bearer_token:
             names.append("X_BEARER_TOKEN")
         if self.x_api_key:

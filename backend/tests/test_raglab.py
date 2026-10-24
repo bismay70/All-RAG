@@ -12,7 +12,7 @@ def test_health_does_not_expose_secret_values() -> None:
     data = response.json()
     assert data["status"] == "ok"
     assert "configured_secret_names" in data
-    assert "api" not in str(data).lower() or "GROK_API_KEY" in data["configured_secret_names"]
+    assert "api" not in str(data).lower() or "GROQ_API_KEY" in data["configured_secret_names"]
 
 
 def test_upload_and_chat_vertical_slice() -> None:

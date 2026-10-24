@@ -3,7 +3,7 @@ export type HealthResponse = {
   app: string
   environment: string
   database: string
-  grok_configured: boolean
+  groq_configured: boolean
   langsmith_configured: boolean
   configured_secret_names: string[]
   checked_at: string

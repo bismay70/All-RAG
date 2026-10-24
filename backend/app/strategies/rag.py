@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.db.models import Run
 from app.generation.citations import build_citations
-from app.generation.providers import XAIProvider
+from app.generation.providers import GroqProvider
 from app.observability.local_tracing import LocalTrace
-from app.retrieval.embeddings import HashEmbeddingProvider
+from app.retrieval.embeddings import SentenceTransformersEmbeddingProvider
 from app.retrieval.store import LocalRetrievalStore, SearchResult
 from app.schemas.chat import ChatRequest, ChatResponse
 from app.schemas.common import RetrievedChunk
@@ -23,9 +23,9 @@ async def run_rag(db: Session, request: ChatRequest) -> ChatResponse:
     settings = get_settings()
     trace = LocalTrace()
     started = time.perf_counter()
-    embedder = HashEmbeddingProvider(settings.embedding_dimensions)
+    embedder = SentenceTransformersEmbeddingProvider(settings.embedding_model, settings.embedding_dimensions)
     store = LocalRetrievalStore(db, embedder)
-    provider = XAIProvider(settings)
+    provider = GroqProvider(settings)
     warnings: list[str] = []
 
     strategy = _resolve_strategy(request.strategy, request.question)
@@ -76,7 +76,7 @@ async def run_rag(db: Session, request: ChatRequest) -> ChatResponse:
         "top_score": round(selected[0].score, 4) if selected else 0,
         "strategy_status": "implemented" if strategy in {"simple", "two_step", "hybrid", "corrective"} else "experimental",
     }
-    usage = {"provider": generation.provider, **generation.usage}
+    usage = {"provider": generation.provider, "model": generation.model, **generation.usage}
     run_id = str(uuid4())
     response = ChatResponse(
         run_id=run_id,

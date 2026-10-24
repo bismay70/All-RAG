@@ -40,7 +40,7 @@ class HealthResponse(BaseModel):
     app: str
     environment: str
     database: str
-    grok_configured: bool
+    groq_configured: bool
     langsmith_configured: bool
     configured_secret_names: list[str]
     checked_at: datetime

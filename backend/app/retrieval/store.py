@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Chunk, Document
-from app.retrieval.embeddings import HashEmbeddingProvider, cosine_similarity
+from app.retrieval.embeddings import EmbeddingProvider, cosine_similarity
 from app.retrieval.lexical import lexical_scores
 
 
@@ -25,7 +25,7 @@ class SearchResult:
 
 
 class LocalRetrievalStore:
-    def __init__(self, db: Session, embedder: HashEmbeddingProvider) -> None:
+    def __init__(self, db: Session, embedder: EmbeddingProvider) -> None:
         self.db = db
         self.embedder = embedder
 

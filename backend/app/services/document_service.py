@@ -11,7 +11,7 @@ from app.core.exceptions import RAGLabError
 from app.db.models import Chunk, Document
 from app.ingestion.chunkers import chunk_sections
 from app.ingestion.parsers import parse_bytes
-from app.retrieval.embeddings import HashEmbeddingProvider
+from app.retrieval.embeddings import SentenceTransformersEmbeddingProvider
 
 
 async def ingest_upload(db: Session, upload: UploadFile) -> Document:
@@ -48,7 +48,7 @@ async def ingest_upload(db: Session, upload: UploadFile) -> Document:
         chunks = chunk_sections(sections, settings.chunk_size, settings.chunk_overlap)
         if not chunks:
             raise RAGLabError("No readable text was found in the document", status_code=422)
-        embedder = HashEmbeddingProvider(settings.embedding_dimensions)
+        embedder = SentenceTransformersEmbeddingProvider(settings.embedding_model, settings.embedding_dimensions)
         for index, chunk in enumerate(chunks):
             chunk_hash = hashlib.sha256(chunk.text.encode("utf-8")).hexdigest()
             db.add(

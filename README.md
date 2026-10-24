@@ -8,8 +8,8 @@ RAGLab AI is a local-first Retrieval-Augmented Generation research workbench. It
 - Safe root `.env` loading with secret values kept server-side.
 - Local SQLite persistence for documents, chunks, runs, datasets, and experiments.
 - Upload and parsing for TXT, Markdown, PDF, HTML, DOCX, and CSV.
-- Configurable chunking, duplicate detection by content hash, local deterministic embeddings, and hybrid dense plus lexical retrieval.
-- xAI/Grok chat-completions adapter with bounded timeout/retry and local extractive fallback.
+- Configurable chunking, duplicate detection by content hash, local Sentence Transformers embeddings, and hybrid dense plus lexical retrieval.
+- Groq chat-completions adapter with model discovery, bounded timeout/retry, clear provider errors, and local extractive fallback.
 - Strategy catalogue with honest `implemented`, `experimental`, and `planned` labels.
 - Simple, two-step, hybrid, reranked, adaptive, multi-query-style, and Corrective RAG-inspired paths.
 - Citation objects, local trace events, retrieval metrics, abstention, and provider health status.
@@ -87,9 +87,12 @@ The backend reads the root `.env` explicitly. Do not put real secrets in fronten
 
 Supported variables include:
 
-- `GROK_API_KEY` or `XAI_API_KEY`
-- `GROK_MODEL`
-- `XAI_BASE_URL`
+- `GROQ_API_KEY`
+- `GROQ_MODEL`
+- `GROQ_DEFAULT_MODEL`
+- `GROQ_BASE_URL`
+- `EMBEDDING_MODEL`
+- `EMBEDDING_DIMENSIONS`
 - `DATABASE_URL`
 - `CORS_ORIGINS`
 - `LANGSMITH_TRACING`
@@ -101,9 +104,9 @@ Only variable names are surfaced in health responses, never values.
 
 ## Providers And Storage
 
-The current local vector-store adapter stores vectors in SQLite as JSON and uses deterministic hashing embeddings. This is intended for local development and tests. Qdrant, PostgreSQL plus pgvector, OCR, GraphRAG storage, and multimodal embeddings are documented as future adapters unless implemented and tested.
+The current local vector-store adapter stores vectors in SQLite as JSON. Embeddings are configured through a local Sentence Transformers model such as `all-MiniLM-L6-v2`; if that package/model is unavailable during local development, the provider status endpoint reports the fallback state clearly. Qdrant, PostgreSQL plus pgvector, OCR, GraphRAG storage, and multimodal embeddings are documented as future adapters unless implemented and tested.
 
-xAI/Grok is used through the backend provider adapter when configured. If the key, model, quota, or network access fails, the app returns a warning and uses local extractive synthesis instead of faking a hosted response.
+Groq is the sole hosted LLM provider. Set `GROQ_API_KEY` in the backend environment. If `GROQ_MODEL` is empty, the backend selects `GROQ_DEFAULT_MODEL` after checking Groq model availability. If the key, model, quota, or network access fails, the app returns a warning and uses local extractive synthesis instead of faking a hosted response.
 
 X API retrieval is optional. The provider status endpoint reports whether credentials are present, but the app does not simulate successful X search without verified access.
 
@@ -127,7 +130,7 @@ npm run build
 
 - CORS: keep `CORS_ORIGINS` aligned with the Vite URL, usually `http://localhost:5173`.
 - Backend import errors: reinstall dependencies inside `backend/.venv`; do not use global Python packages.
-- Grok errors: verify `GROK_API_KEY`, `GROK_MODEL`, quota, and API access. The local fallback should keep the app operational.
+- Groq errors: verify `GROQ_API_KEY`, `GROQ_MODEL`, quota, and API access. The local fallback should keep the app operational.
 - Empty answers: upload at least one readable document and confirm it reaches `indexed` status.
 - Docker warning: Docker is not required for the current SQLite adapter.
 

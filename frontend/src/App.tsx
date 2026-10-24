@@ -99,6 +99,7 @@ function App() {
   }
 
   async function askQuestion() {
+    if (busy || question.trim().length < 2) return
     setBusy(true)
     setError('')
     try {
@@ -342,16 +343,22 @@ function App() {
                   </div>
                 </section>
 
-                <div className="composer">
+                <form
+                  className="composer"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void askQuestion()
+                  }}
+                >
                   <Icon name="clip" />
                   <input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a question about your documents..." />
-                  <button className="tune-button" onClick={() => setActiveView('pipelines')} aria-label="Open pipeline settings">
+                  <button type="button" className="tune-button" onClick={() => setActiveView('pipelines')} aria-label="Open pipeline settings">
                     <Icon name="sliders" />
                   </button>
-                  <button className="send-button" onClick={() => void askQuestion()} disabled={busy || question.trim().length < 2} aria-label="Send question">
+                  <button type="submit" className="send-button" disabled={busy || question.trim().length < 2} aria-label="Send question">
                     <Icon name="send" />
                   </button>
-                </div>
+                </form>
               </div>
             </section>
           ) : (
