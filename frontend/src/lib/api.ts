@@ -9,24 +9,55 @@ import type {
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+type RequestOptions = RequestInit & {
+  timeoutMs?: number
+}
+
+function errorMessageFromPayload(data: unknown, fallback: string) {
+  if (!data || typeof data !== 'object') return fallback
+  const payload = data as { error?: unknown; detail?: unknown; message?: unknown }
+  if (typeof payload.error === 'string') return payload.error
+  if (typeof payload.detail === 'string') return payload.detail
+  if (typeof payload.message === 'string') return payload.message
+  if (Array.isArray(payload.detail)) {
+    const messages = payload.detail
+      .map((item) => {
+        if (!item || typeof item !== 'object') return ''
+        const detail = item as { msg?: unknown }
+        return typeof detail.msg === 'string' ? detail.msg : ''
+      })
+      .filter(Boolean)
+    if (messages.length) return messages.join('; ')
+  }
+  return fallback
+}
+
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+  const { timeoutMs = 30000, ...fetchInit } = init ?? {}
   const controller = new AbortController()
-  const timeout = window.setTimeout(() => controller.abort(), 30000)
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs)
   try {
     const response = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
+      ...fetchInit,
       signal: controller.signal,
       headers:
-        init?.body instanceof FormData
-          ? init.headers
-          : { 'Content-Type': 'application/json', ...init?.headers },
+        fetchInit.body instanceof FormData
+          ? fetchInit.headers
+          : { 'Content-Type': 'application/json', ...fetchInit.headers },
     })
     const text = await response.text()
     const data = text ? JSON.parse(text) : null
     if (!response.ok) {
-      throw new Error(data?.error ?? `Request failed with ${response.status}`)
+      throw new Error(errorMessageFromPayload(data, `Request failed with ${response.status}`))
     }
     return data as T
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new Error('Request timed out. The backend may still be checking the model provider; try again in a moment.', {
+        cause: err,
+      })
+    }
+    throw err
   } finally {
     window.clearTimeout(timeout)
   }
@@ -46,6 +77,7 @@ export const api = {
   chat: (question: string, strategy: string, documentIds: string[], topK: number) =>
     request<ChatResponse>('/chat', {
       method: 'POST',
+      timeoutMs: 120000,
       body: JSON.stringify({
         question,
         strategy,

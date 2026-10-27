@@ -660,6 +660,12 @@
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .chat-workspace,
 .utility-panel {
   margin: 0;
@@ -953,12 +959,36 @@
   border-radius: 999px;
   background: var(--gold);
   color: #071733;
+  position: relative;
 }
 
 .send-button:disabled,
 .index-button:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+.send-button.sending {
+  opacity: 1;
+  cursor: wait;
+}
+
+.send-button.sending .icon-send {
+  opacity: 0;
+}
+
+.send-spinner {
+  display: none;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(7, 23, 51, 0.28);
+  border-top-color: #071733;
+  border-radius: 999px;
+  animation: spin 0.7s linear infinite;
+}
+
+.send-button.sending .send-spinner {
+  display: block;
 }
 
 .utility-panel {

@@ -31,9 +31,11 @@ function App() {
   const [strategy, setStrategy] = useState('hybrid')
   const [topK, setTopK] = useState(5)
   const [question, setQuestion] = useState(fallbackQuestion)
+  const [lastQuestion, setLastQuestion] = useState(fallbackQuestion)
   const [answer, setAnswer] = useState<ChatResponse | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [sending, setSending] = useState(false)
 
   const indexedDocuments = useMemo(() => documents.filter((document) => document.status === 'indexed'), [documents])
   const implementedPipelines = useMemo(() => pipelines.filter((pipeline) => pipeline.status !== 'planned'), [pipelines])
@@ -99,17 +101,21 @@ function App() {
   }
 
   async function askQuestion() {
-    if (busy || question.trim().length < 2) return
+    const submittedQuestion = question.trim()
+    if (busy || sending || submittedQuestion.length < 2) return
     setBusy(true)
+    setSending(true)
     setError('')
     try {
-      const response = await api.chat(question, strategy, activeDocuments, topK)
+      const response = await api.chat(submittedQuestion, strategy, activeDocuments, topK)
       setAnswer(response)
+      setLastQuestion(submittedQuestion)
+      setQuestion('')
       setActiveView('chat')
       setTraces((current) => [
         {
           id: response.run_id,
-          question,
+          question: submittedQuestion,
           strategy: response.strategy,
           verdict: response.verdict,
           metrics: response.metrics,
@@ -120,6 +126,7 @@ function App() {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Chat request failed')
     } finally {
+      setSending(false)
       setBusy(false)
     }
   }
@@ -284,7 +291,7 @@ function App() {
                 <div className="message-row user-row">
                   <div className="user-message">
                     <span className="avatar-small">B</span>
-                    <span>{question || fallbackQuestion}</span>
+                    <span>{lastQuestion}</span>
                   </div>
                   <small>10:24 AM</small>
                 </div>
@@ -355,8 +362,14 @@ function App() {
                   <button type="button" className="tune-button" onClick={() => setActiveView('pipelines')} aria-label="Open pipeline settings">
                     <Icon name="sliders" />
                   </button>
-                  <button type="submit" className="send-button" disabled={busy || question.trim().length < 2} aria-label="Send question">
+                  <button
+                    type="submit"
+                    className={`send-button ${sending ? 'sending' : ''}`}
+                    disabled={busy || question.trim().length < 2}
+                    aria-label={sending ? 'Sending question' : 'Send question'}
+                  >
                     <Icon name="send" />
+                    <span className="send-spinner" aria-hidden="true" />
                   </button>
                 </form>
               </div>
