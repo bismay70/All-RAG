@@ -32,10 +32,13 @@ function App() {
   const [topK, setTopK] = useState(5)
   const [question, setQuestion] = useState(fallbackQuestion)
   const [lastQuestion, setLastQuestion] = useState(fallbackQuestion)
+  const [lastQuestionAt, setLastQuestionAt] = useState(() => new Date())
+  const [lastAnswerAt, setLastAnswerAt] = useState(() => new Date())
   const [answer, setAnswer] = useState<ChatResponse | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [sending, setSending] = useState(false)
+  const [now, setNow] = useState(() => new Date())
 
   const indexedDocuments = useMemo(() => documents.filter((document) => document.status === 'indexed'), [documents])
   const implementedPipelines = useMemo(() => pipelines.filter((pipeline) => pipeline.status !== 'planned'), [pipelines])
@@ -70,6 +73,11 @@ function App() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [loadWorkspace])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   async function handleUpload(file: File | undefined) {
     if (!file) return
@@ -106,11 +114,14 @@ function App() {
     setBusy(true)
     setSending(true)
     setError('')
+    setAnswer(null)
+    setLastQuestion(submittedQuestion)
+    setLastQuestionAt(new Date())
+    setQuestion('')
     try {
       const response = await api.chat(submittedQuestion, strategy, activeDocuments, topK)
       setAnswer(response)
-      setLastQuestion(submittedQuestion)
-      setQuestion('')
+      setLastAnswerAt(new Date())
       setActiveView('chat')
       setTraces((current) => [
         {
@@ -125,6 +136,7 @@ function App() {
       ])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Chat request failed')
+      setQuestion(submittedQuestion)
     } finally {
       setSending(false)
       setBusy(false)
@@ -293,21 +305,27 @@ function App() {
                     <span className="avatar-small">B</span>
                     <span>{lastQuestion}</span>
                   </div>
-                  <small>10:24 AM</small>
+                  <small title={formatAbsoluteTime(lastQuestionAt)}>{formatMessageTime(lastQuestionAt, now)}</small>
                 </div>
 
                 <div className="message-row assistant-row">
                   <Robot compact />
                   <article className="assistant-message">
-                    {answer ? (
+                    {sending ? (
+                      <ThinkingAnswer />
+                    ) : answer ? (
                       <>
-                        <p>{answer.answer}</p>
-                        {answer.warnings.map((warning) => <small className="warning-line" key={warning}>{warning}</small>)}
+                        <FormattedAnswer text={answer.answer} />
+                        {providerWarningMessages(answer.warnings).map((warning) => (
+                          <small className="warning-line" key={warning}>{warning}</small>
+                        ))}
                       </>
                     ) : (
                       <SeededAnswer strategy={selectedPipeline?.name ?? 'Hybrid RAG'} />
                     )}
-                    <span className="message-time">10:24 AM</span>
+                    <span className="message-time" title={formatAbsoluteTime(sending ? lastQuestionAt : lastAnswerAt)}>
+                      {formatMessageTime(sending ? lastQuestionAt : lastAnswerAt, now)}
+                    </span>
                   </article>
                 </div>
 
@@ -489,6 +507,146 @@ function SeededAnswer({ strategy }: { strategy: string }) {
       <small className="strategy-note">{strategy} selected. Upload documents and send a question for live citations.</small>
     </>
   )
+}
+
+function ThinkingAnswer() {
+  return (
+    <div className="thinking-answer" aria-live="polite">
+      <span />
+      <div>
+        <strong>Reading your sources</strong>
+        <p>Retrieving relevant chunks and shaping the answer.</p>
+      </div>
+    </div>
+  )
+}
+
+function FormattedAnswer({ text }: { text: string }) {
+  const blocks = formatAnswerBlocks(text)
+  if (!blocks.length) return <p>No answer was returned.</p>
+
+  return (
+    <div className="formatted-answer">
+      {blocks.map((block, index) => {
+        if (block.type === 'heading') {
+          return <h4 key={`${block.type}-${index}`}>{block.text}</h4>
+        }
+        if (block.type === 'list') {
+          return (
+            <ul className={block.variant === 'sources' ? 'source-list' : undefined} key={`${block.type}-${index}`}>
+              {block.items.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{item}</li>)}
+            </ul>
+          )
+        }
+        if (block.type === 'source') {
+          return <small className="answer-source" key={`${block.type}-${index}`}>{block.text}</small>
+        }
+        return <p key={`${block.type}-${index}`}>{block.text}</p>
+      })}
+    </div>
+  )
+}
+
+type AnswerBlock =
+  | { type: 'heading'; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'source'; text: string }
+  | { type: 'list'; items: string[]; variant?: 'sources' }
+
+function formatAnswerBlocks(text: string): AnswerBlock[] {
+  const normalized = text
+    .replace(/\r/g, '')
+    .replace(/\s+\[(S\d+)\]/g, ' [$1]')
+    .replace(/([.!?])\s+(?=(?:[-*]|\d+\.|\[[S]\d+\]))/g, '$1\n')
+    .trim()
+
+  const lines = normalized
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+
+  const blocks: AnswerBlock[] = []
+  let listItems: string[] = []
+  let listVariant: 'sources' | undefined
+  let currentSection = ''
+
+  const flushList = () => {
+    if (listItems.length) {
+      blocks.push({ type: 'list', items: listItems, variant: listVariant })
+      listItems = []
+      listVariant = undefined
+    }
+  }
+
+  for (const line of lines) {
+    const heading = line.match(/^#{1,3}\s+(.+)$/)
+    if (heading) {
+      flushList()
+      currentSection = cleanAnswerText(heading[1]).toLowerCase()
+      blocks.push({ type: 'heading', text: cleanAnswerText(heading[1]) })
+      continue
+    }
+
+    const bullet = line.match(/^(?:[-*]|\d+[.)])\s+(.+)$/)
+    if (bullet) {
+      listVariant = currentSection.includes('source') ? 'sources' : listVariant
+      listItems.push(cleanAnswerText(bullet[1]))
+      continue
+    }
+
+    flushList()
+    const cleaned = cleanAnswerText(line)
+    if (!cleaned) continue
+    blocks.push(isSourceLine(cleaned) ? { type: 'source', text: cleaned } : { type: 'paragraph', text: cleaned })
+  }
+
+  flushList()
+  return blocks
+}
+
+function cleanAnswerText(text: string) {
+  return text
+    .replace(/\s+([,.;:!?])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+function isSourceLine(text: string) {
+  return text.startsWith('[S') || text.toLowerCase().startsWith('sources used:')
+}
+
+function providerWarningMessages(warnings: string[]) {
+  const messages = warnings.map((warning) => {
+    const lower = warning.toLowerCase()
+    if (lower.includes('connecterror') || lower.includes('network error')) {
+      return 'Groq is currently unreachable, so RAGLab used local extractive synthesis for this answer.'
+    }
+    if (lower.includes('rate limit')) {
+      return 'Groq rate limit reached, so this answer used local extractive synthesis.'
+    }
+    if (lower.includes('api key') || lower.includes('rejected')) {
+      return 'Groq credentials need attention. This answer used local extractive synthesis.'
+    }
+    return warning
+  })
+  return Array.from(new Set(messages))
+}
+
+function formatMessageTime(date: Date, now: Date) {
+  const seconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000))
+  if (seconds < 45) return 'Just now'
+  if (seconds < 90) return '1 min ago'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
+  return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+}
+
+function formatAbsoluteTime(date: Date) {
+  return date.toLocaleString([], {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
 }
 
 function Robot({ compact = false }: { compact?: boolean }) {

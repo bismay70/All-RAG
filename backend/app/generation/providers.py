@@ -1,4 +1,5 @@
 import asyncio
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -131,7 +132,15 @@ class GroqProvider(LLMProvider):
                 "role": "system",
                 "content": (
                     "You are RAGLab AI. Answer only from the supplied evidence. "
-                    "Use inline citations like [S1]. If the evidence is insufficient, say so plainly."
+                    "Do not paste raw chunks. Return concise Markdown in exactly this shape:\n\n"
+                    "## Answer\n"
+                    "- One useful point with an inline citation like [S1].\n"
+                    "- Another useful point with an inline citation.\n\n"
+                    "## Sources\n"
+                    "- [S1] Short source label.\n\n"
+                    "## Caveats\n"
+                    "- Mention missing or weak evidence only when relevant.\n\n"
+                    "If the evidence is insufficient, say so plainly under Answer."
                 ),
             },
             {"role": "user", "content": f"Question: {question}\n\nEvidence:\n{sources}"},
@@ -192,14 +201,156 @@ def _extractive_answer(
             warnings=warnings or [],
             model=model,
         )
-    selected = []
-    for index, item in enumerate(evidence[:3], start=1):
-        snippet = item.text.strip().replace("\n", " ")
-        if len(snippet) > 420:
-            snippet = snippet[:417].rsplit(" ", 1)[0] + "..."
-        selected.append(f"[S{index}] {snippet}")
+
+    question_terms = _content_terms(question)
+    candidates: list[tuple[float, int, str]] = []
+    for source_index, item in enumerate(evidence[:5], start=1):
+        source_weight = max(0.0, item.score) + (0.1 / source_index)
+        for sentence_index, sentence in enumerate(_candidate_sentences(item.text)):
+            terms = _content_terms(sentence)
+            overlap = len(question_terms.intersection(terms))
+            has_signal = overlap > 0 or sentence_index < 2
+            if not has_signal:
+                continue
+            score = source_weight + (overlap * 0.4) - (sentence_index * 0.02)
+            candidates.append((score, source_index, sentence))
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    selected: list[tuple[int, str]] = []
+    seen: set[str] = set()
+    for _, source_index, sentence in candidates:
+        key = _dedupe_key(sentence)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append((source_index, sentence))
+        if len(selected) == 4:
+            break
+
+    if not selected:
+        selected = [
+            (index, _shorten(_clean_evidence_text(item.text), 240))
+            for index, item in enumerate(evidence[:3], start=1)
+            if _clean_evidence_text(item.text)
+        ]
+
+    bullets = "\n".join(f"- {sentence} [S{source_index}]" for source_index, sentence in selected)
+    source_names = "; ".join(
+        f"[S{index}] {item.filename}{f' p.{item.page}' if item.page else ''}"
+        for index, item in enumerate(evidence[: min(len(evidence), 3)], start=1)
+    )
+    source_bullets = "\n".join(
+        f"- [S{index}] {item.filename}{f' p.{item.page}' if item.page else ''}"
+        for index, item in enumerate(evidence[: min(len(evidence), 3)], start=1)
+    )
+    caveat = (
+        "- Groq was unavailable, so this was generated with local extractive synthesis."
+        if warnings
+        else "- None."
+    )
     return GenerationResult(
-        answer="Based on the indexed evidence: " + " ".join(selected),
+        answer=(
+            "## Answer\n\n"
+            f"{bullets}\n\n"
+            "## Sources\n\n"
+            f"{source_bullets or f'- {source_names}'}\n\n"
+            "## Caveats\n\n"
+            f"{caveat}"
+        ),
         warnings=warnings or [],
         model=model,
     )
+
+
+_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "what",
+    "with",
+}
+
+
+def _content_terms(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", text.lower())
+        if token not in _STOPWORDS
+    }
+
+
+def _candidate_sentences(text: str) -> list[str]:
+    cleaned = _clean_evidence_text(text)
+    if not cleaned:
+        return []
+    parts = re.split(r"(?<=[.!?])\s+|(?:\s+-\s+)|(?:\s+#{1,6}\s+)", cleaned)
+    sentences: list[str] = []
+    for part in parts:
+        sentence = _shorten(_clean_sentence(part), 260)
+        word_count = len(sentence.split())
+        if 6 <= word_count <= 55 and not _is_low_value_sentence(sentence):
+            sentences.append(sentence)
+    return sentences
+
+
+def _clean_evidence_text(text: str) -> str:
+    cleaned = re.sub(r"【\d+†[^】]+】", "", text)
+    cleaned = re.sub(r"[/\\](?:envel|linkedin|github|code|gl|phone)[^\s]*", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"#{1,6}\s*", " ", cleaned)
+    cleaned = cleaned.replace("�", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _clean_sentence(text: str) -> str:
+    cleaned = text.strip(" -:;")
+    cleaned = re.sub(r"^(?:Q\d+[.)]?\s*)+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^(?:Ans(?:wer)?|A)[.:]\s*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" -:;")
+
+
+def _is_low_value_sentence(sentence: str) -> bool:
+    lowered = sentence.lower()
+    if sentence.endswith("?"):
+        return True
+    if re.match(r"^q\d+[.)]?\b", lowered):
+        return True
+    if any(token in lowered for token in ("youtube.com", "linkedin.com", "github.com", "leetcode", "codeforces")):
+        return True
+    if re.search(r"\bpage\s+\d+\b", lowered) and len(sentence.split()) < 24:
+        return True
+    if "complete notes" in lowered and len(sentence.split()) < 28:
+        return True
+    if len(re.findall(r"\b(?:http|www\.|\.com|\.in)\b", lowered)) >= 1:
+        return True
+    return False
+
+
+def _shorten(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    shortened = text[: limit - 3].rsplit(" ", 1)[0]
+    return f"{shortened}..."
+
+
+def _dedupe_key(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", text.lower())[:96]
